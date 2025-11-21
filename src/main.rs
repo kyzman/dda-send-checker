@@ -1,10 +1,4 @@
-use russh::{
-    client::{self, Handle},
-    keys::PrivateKeyWithHashAlg,
-    keys::load_secret_key,
-    keys::ssh_key,
-};
-use std::net::SocketAddr;
+use russh::{self, client, keys::PrivateKeyWithHashAlg, keys::load_secret_key, keys::ssh_key};
 use std::sync::Arc;
 use tokio;
 
@@ -64,11 +58,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = PrivateKeyWithHashAlg::new(
         Arc::new(
             load_secret_key(ssh_key_path, ssh_key_password.as_deref())
-                .map_err(|e| format!("Failed to load private key: {}", e))?,
+                .map_err(|e| format!("⛔ Failed to load private key: {}", e))?,
         ),
         None,
     );
 
-    println!("Finished successfully.");
+    // 4. Подключение к SSH-серверу
+    let sh = Client {};
+    let addr = format!("{}:{}", ssh_host, ssh_port);
+    let config = russh::client::Config::default();
+    let config = Arc::new(config);
+    let mut handle = client::connect(config, addr, sh)
+        .await
+        .map_err(|e| format!("⛔ Failed to connect to SSH server: {}", e))?;
+
+    // 5. Аутентификация по ключу
+    let auth_result = handle.authenticate_publickey(ssh_user, key).await;
+
+    match auth_result {
+        Ok(_) => println!("✅ SSH authentication successful"),
+        Err(e) => return Err(format!("⛔ SSH authentication failed: {}", e).into()),
+    }
+
+    // Отключение
+    match handle
+        .disconnect(russh::Disconnect::AuthCancelledByUser, "finish", "EN")
+        .await
+    {
+        Ok(_) => println!("✅ Successfully disconnected from host {}", ssh_host),
+        Err(e) => return Err(format!("⛔ disconnection failed: {}", e).into()),
+    }
+
     Ok(())
 }
