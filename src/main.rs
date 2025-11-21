@@ -1,4 +1,28 @@
+use russh::{
+    client::{self, Handle},
+    keys::PrivateKeyWithHashAlg,
+    keys::load_secret_key,
+    keys::ssh_key,
+};
+use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio;
+
+struct Client {}
+
+// More SSH event handlers
+// can be defined in this trait
+// In this example, we're only using Channel, so these aren't needed.
+impl client::Handler for Client {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &ssh_key::PublicKey,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,7 +38,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ssh_user = std::env::var("SSH_USER").map_err(|e| format!("SSH_USER not set: {}", e))?;
     let ssh_key_path =
         std::env::var("SSH_KEY_PATH").map_err(|e| format!("SSH_KEY_PATH not set: {}", e))?;
-    let ssh_key_password = std::env::var("SSH_KEY_PASSWORD").ok(); // None, если не задан
+    let ssh_key_password = match std::env::var("SSH_KEY_PASSWORD") {
+        Ok(pass) => Some(pass),
+        Err(_) => None,
+    }; // None, если не задан
 
     let mysql_local_port: u16 = std::env::var("MYSQL_LOCAL_PORT")
         .map_err(|e| format!("MYSQL_LOCAL_PORT not set: {}", e))?
@@ -32,6 +59,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("MYSQL_PASSWORD").map_err(|e| format!("MYSQL_PASSWORD not set: {}", e))?;
     let mysql_db =
         std::env::var("MYSQL_DATABASE").map_err(|e| format!("MYSQL_DATABASE not set: {}", e))?;
+
+    // 3. Загрузка приватного ключа
+    let key = PrivateKeyWithHashAlg::new(
+        Arc::new(
+            load_secret_key(ssh_key_path, ssh_key_password.as_deref())
+                .map_err(|e| format!("Failed to load private key: {}", e))?,
+        ),
+        None,
+    );
 
     println!("Finished successfully.");
     Ok(())
