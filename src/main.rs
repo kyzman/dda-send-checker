@@ -1,4 +1,7 @@
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use tokio;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Загрузка переменных из .env
     dotenv::dotenv().map_err(|e| format!("Failed to load .env: {}", e))?;
 
@@ -30,5 +33,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mysql_db =
         std::env::var("MYSQL_DATABASE").map_err(|e| format!("MYSQL_DATABASE not set: {}", e))?;
 
+    println!("Finished successfully.");
     Ok(())
 }
