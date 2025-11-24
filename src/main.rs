@@ -1,6 +1,8 @@
 use russh::{self, client, keys::PrivateKeyWithHashAlg, keys::load_secret_key, keys::ssh_key};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tokio;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 struct Client {}
 
@@ -80,9 +82,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => return Err(format!("⛔ SSH authentication failed: {}", e).into()),
     }
 
+    let local_addr = SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+        mysql_local_port.into(),
+    );
+
+    let listener = tokio::net::TcpListener::bind(local_addr).await?;
+    let (socket, o_addr) = listener.accept().await?;
+    let mut stream = socket;
+    let mut channel = handle
+        .channel_open_direct_tcpip(
+            mysql_remote_host.to_string(),
+            mysql_remote_port.into(),
+            o_addr.ip().to_string(),
+            o_addr.port().into(),
+        )
+        .await?;
+    
+    let mut stream_closed = false;
+    let mut buf = vec![0; 65536];
+    loop {
+        // Handle one of the possible events:
+        tokio::select! {
+            // There's socket input available from the client
+            r = stream.read(&mut buf), if !stream_closed => {
+                match r {
+                    Ok(0) => {
+                        stream_closed = true;
+                        channel.eof().await?;
+                    },
+                    // Send it to the server
+                    Ok(n) => channel.data(&buf[..n]).await?,
+                    Err(e) => return Err(e.into()),
+                };
+            },
+            // There's an event available on the session channel
+            Some(msg) = channel.wait() => {
+                match msg {
+                    // Write data to the client
+                    russh::ChannelMsg::Data { ref data } => {
+                        stream.write_all(data).await?;
+                    }
+                   russh::ChannelMsg::Eof => {
+                        if !stream_closed {
+                            channel.eof().await?;
+                        }
+                        break;
+                    }
+                    russh::ChannelMsg::WindowAdjusted { new_size:_ }=> {
+                        // Ignore this message type
+                    }
+                    _ => {todo!()}
+                }
+            },
+        }
+    }
+
     // Отключение
     match handle
-        .disconnect(russh::Disconnect::AuthCancelledByUser, "finish", "EN")
+        .disconnect(russh::Disconnect::ByApplication, "finished", "English")
         .await
     {
         Ok(_) => println!("✅ Successfully disconnected from host {}", ssh_host),
