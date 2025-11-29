@@ -25,6 +25,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().map_err(|e| format!("Failed to load .env: {}", e))?;
 
     // 2. Обработка и проверка переменных для использования их в программе.
+    let use_ssh = match std::env::var("USE_SSH") {
+        Ok(_) => true,
+        Err(_) => false,
+    };
     let ssh_host = std::env::var("SSH_HOST").map_err(|e| format!("SSH_HOST not set: {}", e))?;
     let ssh_port: u16 = std::env::var("SSH_PORT")
         .map_err(|e| format!("SSH_PORT not set: {}", e))?
@@ -55,6 +59,81 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mysql_db =
         std::env::var("MYSQL_DATABASE").map_err(|e| format!("MYSQL_DATABASE not set: {}", e))?;
 
+    // 3. Если используем SSH, то подключаемся и создаём туннель.
+    if use_ssh {
+        // 1. Подключаемся по SSH
+        let handle =
+            connect_ssh_with_key(ssh_host, ssh_port, ssh_user, ssh_key_path, ssh_key_password)
+                .await?;
+
+        // 2. Запуск TCP-слушателя на локальном порту
+        let listener =
+            tokio::net::TcpListener::bind(format!("127.0.0.1:{}", mysql_local_port)).await?;
+        println!("✅ Listening local port {}", mysql_local_port);
+
+        // 3. Открываем канал от локальной сессии до сервиса.
+        tokio::spawn(async move {
+            let (mut local_socket, _) = listener
+                .accept()
+                .await
+                .expect("⛔ Cannot process local client");
+
+            let ssh_channel = handle
+                .channel_open_direct_tcpip(
+                    &mysql_remote_host.clone(),
+                    mysql_remote_port as u32,
+                    "127.0.0.1",
+                    mysql_local_port as u32,
+                )
+                .await
+                .expect("⛔ Cannot open SSH forwarding channel");
+            let mut ssh_stream = ssh_channel.into_stream();
+
+            // Копирование в обе стороны данных.
+            tokio::io::copy_bidirectional(&mut local_socket, &mut ssh_stream)
+                .await
+                .expect("⛔ Copy error between local socket and SSH stream");
+        });
+    }
+
+    // 4. Подключаемся к Базе данных.
+    let database_url = format!(
+        "postgres://{}:{}@localhost:{}/{}",
+        mysql_user, mysql_password, mysql_local_port, mysql_db
+    );
+
+    let pool = PgPool::connect(&database_url).await?;
+
+    // 5. Пример запроса к БД.
+    let row = pool.fetch_all("SELECT VERSION() as version").await.unwrap();
+
+    // 6. Тестовый вывод результата.
+    println!("Version: {:?}", row);
+
+    // Отключение канала.
+    // handle
+    //     .cancel_tcpip_forward(&mysql_remote_host, mysql_remote_port.into())
+    //     .await?;
+
+    // Отключение SSH
+    // match handle
+    //     .disconnect(russh::Disconnect::ByApplication, "finished", "English")
+    //     .await
+    // {
+    //     Ok(_) => println!("✅ Successfully disconnected from host {}", ssh_host),
+    //     Err(e) => return Err(format!("⛔ disconnection failed: {}", e).into()),
+    // }
+
+    Ok(())
+}
+
+async fn connect_ssh_with_key(
+    ssh_host: String,
+    ssh_port: u16,
+    ssh_user: String,
+    ssh_key_path: String,
+    ssh_key_password: Option<String>,
+) -> Result<russh::client::Handle<Client>, Box<dyn std::error::Error>> {
     // 3. Загрузка приватного ключа
     let key = PrivateKeyWithHashAlg::new(
         Arc::new(
@@ -63,10 +142,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         None,
     );
-
-    // 4. Запуск TCP-слушателя на локальном порту
-    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", mysql_local_port)).await?;
-    println!("✅ Listening local port {}", mysql_local_port);
 
     // 4. Подключение к SSH-серверу
     let sh = Client {};
@@ -86,57 +161,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => return Err(format!("⛔ SSH authentication failed: {}", e).into()),
     }
 
-    // 6. Открываем канал от локальной сессии до сервиса.
-    tokio::spawn(async move {
-        let (mut local_socket, _) = listener
-            .accept()
-            .await
-            .expect("⛔ Cannot process local client");
-
-        let ssh_channel = handle
-            .channel_open_direct_tcpip(
-                &mysql_remote_host.clone(),
-                mysql_remote_port as u32,
-                "127.0.0.1",
-                mysql_local_port as u32,
-            )
-            .await
-            .expect("⛔ Cannot open SSH forwarding channel");
-        let mut ssh_stream = ssh_channel.into_stream();
-
-        // 7. Копирование в обе стороны данных.
-        tokio::io::copy_bidirectional(&mut local_socket, &mut ssh_stream)
-            .await
-            .expect("⛔ Copy error between local socket and SSH stream");
-    });
-
-    // 8. Подключаемся к Базе данных через созданный туннель
-    let database_url = format!(
-        "postgres://{}:{}@localhost:{}/{}",
-        mysql_user, mysql_password, mysql_local_port, mysql_db
-    );
-
-    let pool = PgPool::connect(&database_url).await?;
-
-    // 9. Пример запроса к БД.
-    let row = pool.fetch_all("SELECT VERSION() as version").await.unwrap();
-
-    // 10. Тестовый вывод результата.
-    println!("Version: {:?}", row);
-
-    // Отключение канала.
-    // handle
-    //     .cancel_tcpip_forward(&mysql_remote_host, mysql_remote_port.into())
-    //     .await?;
-
-    // Отключение SSH
-    // match handle
-    //     .disconnect(russh::Disconnect::ByApplication, "finished", "English")
-    //     .await
-    // {
-    //     Ok(_) => println!("✅ Successfully disconnected from host {}", ssh_host),
-    //     Err(e) => return Err(format!("⛔ disconnection failed: {}", e).into()),
-    // }
-
-    Ok(())
+    Ok(handle)
 }
