@@ -1,5 +1,5 @@
 use russh::{self, client, keys::PrivateKeyWithHashAlg, keys::load_secret_key, keys::ssh_key};
-use sqlx::{Executor, PgPool};
+use sqlx::{Column, Executor, MySqlPool, Row, mysql::MySqlRow, query};
 use std::sync::Arc;
 use tokio;
 
@@ -59,6 +59,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mysql_db =
         std::env::var("MYSQL_DATABASE").map_err(|e| format!("MYSQL_DATABASE not set: {}", e))?;
 
+    let table1 = std::env::var("TABLE1").map_err(|e| format!("TABLE1 not set: {}", e))?;
+
     // 3. Если используем SSH, то подключаемся и создаём туннель.
     if use_ssh {
         // 1. Подключаемся по SSH
@@ -102,13 +104,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mysql_user, mysql_password, mysql_local_port, mysql_db
     );
 
-    let pool = PgPool::connect(&database_url).await?;
+    let pool = MySqlPool::connect(&database_url).await?;
 
     // 5. Пример запроса к БД.
-    let row = pool.fetch_all("SELECT VERSION() as version").await.unwrap();
+    // let mut rows = query("SELECT * from mis_employee").fetch(&pool);
+    let qry: &str = &format!("select * from {}", table1);
+    let res: Vec<MySqlRow> = pool.fetch_all(qry).await.unwrap();
 
     // 6. Тестовый вывод результата.
-    println!("Version: {:?}", row);
+    println!(
+        "{:?}",
+        res.get(0)
+            .unwrap()
+            .columns()
+            .iter()
+            .map(|n| n.name())
+            .collect::<Vec<&str>>()
+    ); // вывод списка названий колонок
+
+    for row in res {
+        for col in 0..row.len() {
+            match row.try_get_unchecked::<String, usize>(col) {
+                Ok(value) => print!("{}", value),
+                Err(sqlx::Error::ColumnDecode { index: _, source }) => {
+                    if source.is::<sqlx::error::UnexpectedNullError>() {
+                        print!("<null>")
+                    } else {
+                        print!("{:?}", source)
+                    }
+                }
+                Err(err) => print!("{:?}", err),
+                //     Error::ColumnDecode { index, source }
+                // }
+            }
+            if col < row.len() - 1 {
+                print!(" | ")
+            } else {
+                println!("")
+            }
+        }
+    }
 
     // Отключение канала.
     // handle
