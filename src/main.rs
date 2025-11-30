@@ -1,5 +1,5 @@
 use russh::{self, client, keys::PrivateKeyWithHashAlg, keys::load_secret_key, keys::ssh_key};
-use sqlx::{Column, Executor, MySqlPool, Row, mysql::MySqlRow, query};
+use sqlx::{Column, Executor, MySqlPool, Row, mysql::MySqlRow};
 use std::sync::Arc;
 use tokio;
 
@@ -109,42 +109,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 5. Пример запроса к БД.
     // let mut rows = query("SELECT * from mis_employee").fetch(&pool);
     let qry: &str = &format!("select * from {}", table1);
+    // let qry: &str = &format!("select version()");
+
     let res: Vec<MySqlRow> = pool.fetch_all(qry).await.unwrap();
 
     // 6. Тестовый вывод результата.
-    println!(
-        "{:?}",
-        res.get(0)
-            .unwrap()
-            .columns()
-            .iter()
-            .map(|n| n.name())
-            .collect::<Vec<&str>>()
-    ); // вывод списка названий колонок
+    // let header =
 
-    for row in res {
-        for col in 0..row.len() {
-            match row.try_get_unchecked::<String, usize>(col) {
-                Ok(value) => print!("{}", value),
-                Err(sqlx::Error::ColumnDecode { index: _, source }) => {
-                    if source.is::<sqlx::error::UnexpectedNullError>() {
-                        print!("<null>")
-                    } else {
-                        print!("{:?}", source)
+    if res.len() > 0 {
+        println!(
+            "{:?}",
+            res.get(0)
+                .unwrap()
+                .columns()
+                .iter()
+                .map(|n| n.name())
+                .collect::<Vec<&str>>()
+        ); // вывод списка названий колонок
+
+        for row in res {
+            for col in 0..row.len() {
+                match row.try_get_unchecked::<String, usize>(col) {
+                    Ok(value) => print!("{}", value),
+                    Err(sqlx::Error::ColumnDecode { index: _, source }) => {
+                        if source.is::<sqlx::error::UnexpectedNullError>() {
+                            print!("<null>")
+                        } else {
+                            print!("{:?}", source)
+                        }
                     }
+                    Err(err) => print!("{:?}", err),
+                    //     Error::ColumnDecode { index, source }
+                    // }
                 }
-                Err(err) => print!("{:?}", err),
-                //     Error::ColumnDecode { index, source }
-                // }
-            }
-            if col < row.len() - 1 {
-                print!(" | ")
-            } else {
-                println!("")
+                if col < row.len() - 1 {
+                    print!(" | ")
+                } else {
+                    println!("")
+                }
             }
         }
+    } else {
+        println!("Empty result")
     }
-
     // Отключение канала.
     // handle
     //     .cancel_tcpip_forward(&mysql_remote_host, mysql_remote_port.into())
