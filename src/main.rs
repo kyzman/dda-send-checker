@@ -1,7 +1,45 @@
-use russh::{self, client, keys::PrivateKeyWithHashAlg, keys::load_secret_key, keys::ssh_key};
+use chrono::NaiveDate;
+use russh::{
+    self, client,
+    keys::{PrivateKeyWithHashAlg, load_secret_key, ssh_key},
+};
 use sqlx::{Column, Executor, MySqlPool, Row, mysql::MySqlRow};
 use std::sync::Arc;
 use tokio;
+
+#[derive(Debug)]
+enum InputData {
+    Unsent(NaiveDate),
+    Wegabond(NaiveDate),
+    Unknown,
+}
+
+fn parse_date_from_arg(argument: &str) -> InputData {
+    let data = argument.split("_").collect::<Vec<&str>>();
+    let tbl_type = data.get(5).unwrap_or(&"");
+    let year = data.get(3).unwrap_or(&"0").parse().unwrap_or(0);
+    let month = data.get(4).unwrap_or(&"0").parse().unwrap_or(0);
+    let day = data
+        .get(data.len() - 2)
+        .unwrap_or(&"-1")
+        .parse()
+        .unwrap_or(99);
+    let parsed_date = match NaiveDate::from_ymd_opt(year, month, day) {
+        Some(value) => value,
+        None => {
+            eprintln!("⚠ Unknown date: {}-{}-{}", year, month, day);
+            return InputData::Unknown;
+        }
+    };
+
+    if tbl_type == &"hypothesis" {
+        InputData::Unsent(parsed_date)
+    } else if tbl_type == &"wegabond" {
+        InputData::Wegabond(parsed_date)
+    } else {
+        InputData::Unknown
+    }
+}
 
 struct Client {}
 
@@ -21,10 +59,21 @@ impl client::Handler for Client {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Загрузка переменных из .env
+    // 1. Парсинг аргумента из командной строки.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    let main_table = match args.get(0) {
+        Some(idate) => parse_date_from_arg(idate),
+        None => {
+            eprintln!("⛔ No arguments given!");
+            std::process::exit(1)
+        }
+    };
+
+    // 2. Загрузка переменных из .env
     dotenv::dotenv().map_err(|e| format!("Failed to load .env: {}", e))?;
 
-    // 2. Обработка и проверка переменных для использования их в программе.
+    // 3. Обработка и проверка переменных для использования их в программе.
     let use_ssh = match std::env::var("USE_SSH") {
         Ok(_) => true,
         Err(_) => false,
@@ -61,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let table1 = std::env::var("TABLE1").map_err(|e| format!("TABLE1 not set: {}", e))?;
 
-    // 3. Если используем SSH, то подключаемся и создаём туннель.
+    // 4. Если используем SSH, то подключаемся и создаём туннель.
     if use_ssh {
         // 1. Подключаемся по SSH
         let handle =
@@ -89,6 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .await
                 .expect("⛔ Cannot open SSH forwarding channel");
+
             let mut ssh_stream = ssh_channel.into_stream();
 
             // Копирование в обе стороны данных.
@@ -98,7 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // 4. Подключаемся к Базе данных.
+    // 5. Подключаемся к Базе данных.
     let database_url = format!(
         "postgres://{}:{}@localhost:{}/{}",
         mysql_user, mysql_password, mysql_local_port, mysql_db
@@ -106,15 +156,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = MySqlPool::connect(&database_url).await?;
 
-    // 5. Пример запроса к БД.
-    // let mut rows = query("SELECT * from mis_employee").fetch(&pool);
-    let qry: &str = &format!("select * from {}", table1);
+    // 6. Пример запроса к БД.
+    let qry: &str = &format!(
+        "select * from {} tbl where tbl.OPERATION_ID = 13007 and tbl.START_DATE_TIME >= '2025-11-26' order by tbl.START_DATE_TIME desc limit 10",
+        table1
+    ); // current_date()
     // let qry: &str = &format!("select version()");
 
+    // let mut rows = query(qry).fetch(&pool);
     let res: Vec<MySqlRow> = pool.fetch_all(qry).await.unwrap();
 
-    // 6. Тестовый вывод результата.
-    // let header =
+    // 7. Тестовый вывод результата.
 
     if res.len() > 0 {
         println!(
@@ -168,6 +220,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+fn parse_args() {}
 
 async fn connect_ssh_with_key(
     ssh_host: String,

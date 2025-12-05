@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
+chrono = "0.4.42"
 dotenv = "0.15.0"
 ed25519 = "2.2.3"
 russh = "0.54.6"
