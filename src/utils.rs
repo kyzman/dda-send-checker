@@ -1,0 +1,96 @@
+use chrono::NaiveDate;
+use russh::{
+    self, client,
+    keys::{PrivateKeyWithHashAlg, load_secret_key, ssh_key},
+};
+use std::sync::Arc;
+
+#[derive(Debug)]
+pub enum InputData {
+    Unsent(NaiveDate),
+    Wegabond(NaiveDate),
+    Unknown,
+}
+
+pub struct Client {}
+
+// More SSH event handlers
+// can be defined in this trait
+// In this example, we're only using Channel, so these aren't needed.
+impl client::Handler for Client {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &ssh_key::PublicKey,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+}
+
+pub fn parse_date_from_arg(argument: &str) -> InputData {
+    let data = argument.split("_").collect::<Vec<&str>>();
+    if data.len() < 3 {
+        return InputData::Unknown;
+    }
+    let tbl_type = data.get(5).unwrap_or(&"");
+    let year = data.get(3).unwrap_or(&"0").parse().unwrap_or(0);
+    let month = data.get(4).unwrap_or(&"0").parse().unwrap_or(0);
+    let day = data
+        .get(data.len() - 2)
+        .unwrap_or(&"-1")
+        .parse()
+        .unwrap_or(99);
+    let parsed_date = match NaiveDate::from_ymd_opt(year, month, day) {
+        Some(value) => value,
+        None => {
+            eprintln!("Unknown date: {}-{}-{}", year, month, day);
+            return InputData::Unknown;
+        }
+    };
+
+    if tbl_type == &"hypothesis" {
+        InputData::Unsent(parsed_date)
+    } else if tbl_type == &"wegabond" {
+        InputData::Wegabond(parsed_date)
+    } else {
+        InputData::Unknown
+    }
+}
+
+pub async fn connect_ssh_with_key(
+    ssh_host: String,
+    ssh_port: u16,
+    ssh_user: String,
+    ssh_key_path: String,
+    ssh_key_password: Option<String>,
+) -> Result<russh::client::Handle<Client>, Box<dyn std::error::Error>> {
+    // 3. Загрузка приватного ключа
+    let key = PrivateKeyWithHashAlg::new(
+        Arc::new(
+            load_secret_key(ssh_key_path, ssh_key_password.as_deref())
+                .map_err(|e| format!("⛔ Failed to load private key: {}", e))?,
+        ),
+        None,
+    );
+
+    // 4. Подключение к SSH-серверу
+    let sh = Client {};
+    let addr = format!("{}:{}", ssh_host, ssh_port);
+    let config = russh::client::Config::default();
+    let config = Arc::new(config);
+
+    let mut handle = client::connect(config, addr, sh)
+        .await
+        .map_err(|e| format!("⛔ Failed to connect to SSH server: {}", e))?;
+
+    // 5. Аутентификация по ключу
+    let auth_result = handle.authenticate_publickey(ssh_user, key).await;
+
+    match auth_result {
+        Ok(_) => println!("✅ SSH authentication successful"),
+        Err(e) => return Err(format!("⛔ SSH authentication failed: {}", e).into()),
+    }
+
+    Ok(handle)
+}
