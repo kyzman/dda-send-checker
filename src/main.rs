@@ -1,6 +1,9 @@
-// use chrono::NaiveDate;
+use chrono::Local;
 use sqlx::{Column, Executor, MySqlPool, Row, mysql::MySqlRow};
+use std::time::Duration;
 use tokio;
+
+use crate::utils::InputData;
 
 mod utils;
 
@@ -16,8 +19,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1)
         }
     };
+    let main_table_name = &args[0];
 
     println!("{:?}", main_table);
+    println!("{}", main_table_name);
+
+    let orig_date = match main_table {
+        InputData::Unknown => {
+            eprintln!("⛔ Unknown date!");
+            std::process::exit(1)
+        }
+        InputData::Unsent(d) => d,
+        InputData::Wegabond(d) => d,
+    };
 
     // 2. Загрузка переменных из .env
     dotenv::dotenv().map_err(|e| format!("Failed to load .env: {}", e))?;
@@ -58,6 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("MYSQL_DATABASE").map_err(|e| format!("MYSQL_DATABASE not set: {}", e))?;
 
     let table1 = std::env::var("TABLE1").map_err(|e| format!("TABLE1 not set: {}", e))?;
+    let table2 = std::env::var("TABLE2").map_err(|e| format!("TABLE2 not set: {}", e))?;
 
     // 4. Если используем SSH, то подключаемся и создаём туннель.
     if use_ssh {
@@ -110,53 +125,73 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = MySqlPool::connect(&database_url).await?;
 
-    // 6. Пример запроса к БД.
     let qry: &str = &format!(
-        "select * from {} tbl where tbl.OPERATION_ID = 13007 and tbl.START_DATE_TIME >= '2025-11-26' order by tbl.START_DATE_TIME desc limit 10",
-        table1
-    ); // current_date()
-    // let qry: &str = &format!("select version()");
+        "with tenant_ids as (select tbl.TENANT_ID from
+    seeneco_dwh.{main_table_name} tbl
+    )
+    select
+    (select count(*) from tenant_ids
+    ) as 'TOTAL'
+    ,
+    (select count(bsr.ID) from {table1} bsr
+    where
+    bsr.tenant_id in (select * from tenant_ids)
+    and bsr.CREATE_DATE_TIME between current_date() and DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+    ) as 'BSR'
+    ,
+    (select count(bpd.ID) from {table2} bpd where
+    bpd.tenant_id in (select * from tenant_ids)
+    and bpd.payment_demand_date_time between current_date() and DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+    ) as 'BPD'
+    "
+    );
 
-    // let mut rows = query(qry).fetch(&pool);
-    let res: Vec<MySqlRow> = pool.fetch_all(qry).await.unwrap();
+    // 6. Пример запроса к БД.
+    loop {
+        tokio::time::sleep(Duration::from_secs(10)).await;
 
-    // 7. Тестовый вывод результата.
+        // let mut rows = query(qry).fetch(&pool);
+        let res: Vec<MySqlRow> = pool.fetch_all(qry).await.unwrap();
 
-    if res.len() > 0 {
-        println!(
-            "{:?}",
-            res.get(0)
-                .unwrap()
-                .columns()
-                .iter()
-                .map(|n| n.name())
-                .collect::<Vec<&str>>()
-        ); // вывод списка названий колонок
+        // 7. Тестовый вывод результата.
 
-        for row in res {
-            for col in 0..row.len() {
-                match row.try_get_unchecked::<String, usize>(col) {
-                    Ok(value) => print!("{}", value),
-                    Err(sqlx::Error::ColumnDecode { index: _, source }) => {
-                        if source.is::<sqlx::error::UnexpectedNullError>() {
-                            print!("<null>")
-                        } else {
-                            print!("{:?}", source)
+        if res.len() > 0 {
+            print!("[{}] ", Local::now().format("%Y-%m-%d %H:%M:%S"));
+            //     println!(
+            //         "{:?}",
+            //         res.get(0)
+            //             .unwrap()
+            //             .columns()
+            //             .iter()
+            //             .map(|n| n.name())
+            //             .collect::<Vec<&str>>()
+            //     ); // вывод списка названий колонок
+
+            for row in res {
+                for col in 0..row.len() {
+                    match row.try_get_unchecked::<String, usize>(col) {
+                        Ok(value) => print!("{}: {}", row.column(col).name(), value),
+                        Err(sqlx::Error::ColumnDecode { index: _, source }) => {
+                            if source.is::<sqlx::error::UnexpectedNullError>() {
+                                print!("<null>")
+                            } else {
+                                print!("{:?}", source)
+                            }
                         }
+                        Err(err) => print!("{:?}", err),
+                        //     Error::ColumnDecode { index, source }
+                        // }
                     }
-                    Err(err) => print!("{:?}", err),
-                    //     Error::ColumnDecode { index, source }
-                    // }
-                }
-                if col < row.len() - 1 {
-                    print!(" | ")
-                } else {
-                    println!("")
+                    if col < row.len() - 1 {
+                        print!(" | ")
+                    } else {
+                        println!("")
+                    }
                 }
             }
+        } else {
+            println!("Empty result")
         }
-    } else {
-        println!("Empty result")
     }
     // Отключение канала.
     // handle

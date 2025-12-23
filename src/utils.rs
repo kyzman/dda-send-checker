@@ -6,6 +6,7 @@ use russh::{
 use std::sync::Arc;
 
 #[derive(Debug)]
+// #[warn(dead_code)]
 pub enum InputData {
     Unsent(NaiveDate),
     Wegabond(NaiveDate),
