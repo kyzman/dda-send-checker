@@ -73,6 +73,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let table1 = std::env::var("TABLE1").map_err(|e| format!("TABLE1 not set: {}", e))?;
     let table2 = std::env::var("TABLE2").map_err(|e| format!("TABLE2 not set: {}", e))?;
+    let req_interval: u64 = std::env::var("INTERVAL")
+        .map_err(|e| format!("INTERVAL not set: {}", e))?
+        .parse()
+        .map_err(|e| format!("INTERVAL is not a number: {}", e))?;
 
     // 4. Если используем SSH, то подключаемся и создаём туннель.
     if use_ssh {
@@ -148,7 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 6. Пример запроса к БД.
     loop {
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(Duration::from_secs(req_interval)).await;
 
         // let mut rows = query(qry).fetch(&pool);
         let res: Vec<MySqlRow> = pool.fetch_all(qry).await.unwrap();
