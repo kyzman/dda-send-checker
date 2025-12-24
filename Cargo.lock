@@ -645,6 +645,7 @@ dependencies = [
  "chrono",
  "dotenv",
  "ed25519",
+ "regex",
  "russh",
  "sqlx",
  "tokio",

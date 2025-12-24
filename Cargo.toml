@@ -8,6 +8,14 @@ license = "MIT"
 chrono = "0.4.42"
 dotenv = "0.15.0"
 ed25519 = "2.2.3"
+regex = "1.12.2"
 russh = "0.54.6"
 sqlx = { version = "0.8.6", features = ["postgres", "runtime-async-std", "macros", "mysql", "time"] }
 tokio = { version = "1.48.0", features = ["full"] }
+
+[profile.release]
+opt-level = "z"       # Optimize for the smallest code size
+lto = true            # Enable Link Time Optimization (LTO)
+codegen-units = 1     # Reduce the number of code generation units, increasing optimization time but reducing binary size
+panic = "abort"       # Use 'abort' instead of 'unwind' for panic handling
+strip = "debuginfo"   # Remove debug information

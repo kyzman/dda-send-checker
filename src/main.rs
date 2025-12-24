@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1)
         }
     };
-    let main_table_name = &args[0];
+    let main_table_name = &args[0].replace("`", "");
 
     println!("{:?}", main_table);
     println!("{}", main_table_name);
@@ -71,8 +71,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mysql_db =
         std::env::var("MYSQL_DATABASE").map_err(|e| format!("MYSQL_DATABASE not set: {}", e))?;
 
-    let table1 = std::env::var("TABLE1").map_err(|e| format!("TABLE1 not set: {}", e))?;
-    let table2 = std::env::var("TABLE2").map_err(|e| format!("TABLE2 not set: {}", e))?;
+    let schema = std::env::var("SCHEMA")
+        .map_err(|e| format!("SCHEMA not set: {}", e))?
+        .replace("`", "");
+
+    let table1 = std::env::var("TABLE1")
+        .map_err(|e| format!("TABLE1 not set: {}", e))?
+        .replace("`", "");
+    let table2 = std::env::var("TABLE2")
+        .map_err(|e| format!("TABLE2 not set: {}", e))?
+        .replace("`", "");
     let req_interval: u64 = std::env::var("INTERVAL")
         .map_err(|e| format!("INTERVAL not set: {}", e))?
         .parse()
@@ -131,19 +139,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let qry: &str = &format!(
         "with tenant_ids as (select tbl.TENANT_ID from
-    seeneco_dwh.{main_table_name} tbl
+    `seeneco_dwh`.`{main_table_name}` tbl
     )
     select
     (select count(*) from tenant_ids
     ) as 'TOTAL'
     ,
-    (select count(bsr.ID) from {table1} bsr
+    (select count(bsr.ID) from `{schema}`.`{table1}` bsr
     where
     bsr.tenant_id in (select * from tenant_ids)
     and bsr.CREATE_DATE_TIME between current_date() and DATE_ADD(CURDATE(), INTERVAL 1 DAY)
     ) as 'BSR'
     ,
-    (select count(bpd.ID) from {table2} bpd where
+    (select count(bpd.ID) from `{schema}`.`{table2}` bpd where
     bpd.tenant_id in (select * from tenant_ids)
     and bpd.payment_demand_date_time between current_date() and DATE_ADD(CURDATE(), INTERVAL 1 DAY)
     ) as 'BPD'
