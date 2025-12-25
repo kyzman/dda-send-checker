@@ -1,4 +1,5 @@
 use chrono::Local;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, poll, read};
 use sqlx::{
     Column, Executor, Row,
     mysql::{MySqlPoolOptions, MySqlRow},
@@ -174,7 +175,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 6. Пример запроса к БД.
     loop {
-        tokio::time::sleep(Duration::from_secs(req_interval)).await;
+        // tokio::time::sleep(Duration::from_secs(req_interval)).await;
+        if poll(Duration::from_secs(req_interval))? {
+            let event_occurs = read()?;
+            match event_occurs {
+                Event::Key(
+                    KeyEvent {
+                        code: KeyCode::Char('q') | KeyCode::Char('й'),
+                        modifiers: KeyModifiers::CONTROL,
+                        kind: crossterm::event::KeyEventKind::Press,
+                        state: _,
+                    }
+                    | KeyEvent {
+                        code: KeyCode::Esc,
+                        modifiers: KeyModifiers::NONE,
+                        kind: crossterm::event::KeyEventKind::Press,
+                        state: _,
+                    },
+                ) => break,
+                _ => (),
+            }
+        }
 
         // let res = query(qry).fetch_all(&pool).await?;
         let res: Vec<MySqlRow> = match pool.fetch_all(qry).await {
