@@ -143,6 +143,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = MySqlPoolOptions::new()
         // .idle_timeout(timeout)
         // .max_connections(3)
+        .acquire_timeout(Duration::from_secs(120))
         .max_lifetime(Some(Duration::from_secs(lifetime * 60)))
         .connect(&database_url)
         .await?;
