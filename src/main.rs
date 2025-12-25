@@ -1,5 +1,8 @@
 use chrono::Local;
-use sqlx::{Column, Executor, MySqlPool, Row, mysql::MySqlRow};
+use sqlx::{
+    Column, Executor, Row,
+    mysql::{MySqlPoolOptions, MySqlRow},
+};
 use std::time::Duration;
 use tokio;
 
@@ -21,10 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let main_table_name = &args[0].replace("`", "");
 
-    println!("{:?}", main_table);
-    println!("{}", main_table_name);
-
-    let orig_date = match main_table {
+    let _orig_date = match main_table {
         InputData::Unknown => {
             eprintln!("⛔ Unknown date!");
             std::process::exit(1)
@@ -85,6 +85,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("INTERVAL not set: {}", e))?
         .parse()
         .map_err(|e| format!("INTERVAL is not a number: {}", e))?;
+    let lifetime: u64 = std::env::var("LIFETIME")
+        .map_err(|e| format!("LIFETIME not set: {}", e))?
+        .parse()
+        .map_err(|e| format!("LIFETIME is not a number: {}", e))?;
 
     // 4. Если используем SSH, то подключаемся и создаём туннель.
     if use_ssh {
@@ -131,11 +135,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 5. Подключаемся к Базе данных.
     let database_url = format!(
-        "postgres://{}:{}@localhost:{}/{}",
+        "mysql://{}:{}@localhost:{}/{}",
         mysql_user, mysql_password, mysql_local_port, mysql_db
     );
 
-    let pool = MySqlPool::connect(&database_url).await?;
+    let pool = MySqlPoolOptions::new()
+        // .idle_timeout(timeout)
+        // .max_connections(3)
+        .max_lifetime(Some(Duration::from_secs(lifetime * 60)))
+        .connect(&database_url)
+        .await?;
+
+    // println!("{:?}", pool.connect_options());
+    // println!("Pool is closed? {:?}", pool.is_closed());
+    // println!("IDLE connections {:?}", pool.num_idle());
+    // println!("Total connections {:?}", pool.size());
 
     let qry: &str = &format!(
         "with tenant_ids as (select tbl.TENANT_ID from
@@ -162,22 +176,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         tokio::time::sleep(Duration::from_secs(req_interval)).await;
 
-        // let mut rows = query(qry).fetch(&pool);
-        let res: Vec<MySqlRow> = pool.fetch_all(qry).await.unwrap();
+        // let res = query(qry).fetch_all(&pool).await?;
+        let res: Vec<MySqlRow> = match pool.fetch_all(qry).await {
+            Ok(res) => res,
+            Err(e) => {
+                println!("{:?}", e);
+                println!("Pool is closed? {:?}", pool.is_closed());
+                println!("IDLE connections {:?}", pool.num_idle());
+                println!("Total connections {:?}", pool.size());
+                break;
+            }
+        };
 
-        // 7. Тестовый вывод результата.
+        // 7. Вывод результата.
 
         if res.len() > 0 {
             print!("[{}] ", Local::now().format("%Y-%m-%d %H:%M:%S"));
-            //     println!(
-            //         "{:?}",
-            //         res.get(0)
-            //             .unwrap()
-            //             .columns()
-            //             .iter()
-            //             .map(|n| n.name())
-            //             .collect::<Vec<&str>>()
-            //     ); // вывод списка названий колонок
+            // println!(
+            //     "{:?}",
+            //     res.get(0)
+            //         .unwrap()
+            //         .columns()
+            //         .iter()
+            //         .map(|n| n.name())
+            //         .collect::<Vec<&str>>()
+            // ); // вывод списка названий колонок
 
             for row in res {
                 for col in 0..row.len() {
