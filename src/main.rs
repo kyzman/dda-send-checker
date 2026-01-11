@@ -1,9 +1,6 @@
 use chrono::Local;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, poll, read};
-use sqlx::{
-    Column, Executor, Row,
-    mysql::{MySqlPoolOptions, MySqlRow},
-};
+use sqlx::{Column, Executor, Row, mysql::MySqlRow};
 use std::time::Duration;
 use tokio;
 
@@ -140,13 +137,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mysql_user, mysql_password, mysql_local_port, mysql_db
     );
 
-    let pool = MySqlPoolOptions::new()
-        // .idle_timeout(timeout)
-        // .max_connections(3)
-        .acquire_timeout(Duration::from_secs(120))
-        .max_lifetime(Some(Duration::from_secs(lifetime * 60)))
-        .connect(&database_url)
-        .await?;
+    let pool = utils::create_pool(&database_url, lifetime).await?;
+
+    // MySqlPoolOptions::new()
+    // .idle_timeout(timeout)
+    // .max_connections(3)
+    // .acquire_timeout(Duration::from_secs(20))
+    // .max_lifetime(Some(Duration::from_secs(lifetime * 60)))
+    // .connect(&database_url)
+    // .await?;
 
     // println!("{:?}", pool.connect_options());
     // println!("Pool is closed? {:?}", pool.is_closed());
@@ -201,11 +200,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // let res = query(qry).fetch_all(&pool).await?;
         let res: Vec<MySqlRow> = match pool.fetch_all(qry).await {
             Ok(res) => res,
-            Err(e) => {
-                println!("{:?}", e);
+            Err(sqlx::Error::PoolTimedOut) => {
+                println!("PoolTimedOut error!");
                 println!("Pool is closed? {:?}", pool.is_closed());
                 println!("IDLE connections {:?}", pool.num_idle());
                 println!("Total connections {:?}", pool.size());
+                if pool.num_idle() > 0 {
+                    let mut new_pool = match pool.try_acquire() {
+                        Some(conn) => conn,
+                        None => {
+                            println!("Can't acquire pool");
+                            break;
+                        }
+                    };
+                    let new_res = new_pool.fetch_all(qry).await?;
+                    println!("{:?}", new_res);
+                } else {
+                    println!("No free connection!");
+                }
+                break;
+            }
+            Err(e) => {
+                println!("Error: {:?}", e);
                 break;
             }
         };

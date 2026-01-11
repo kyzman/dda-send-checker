@@ -3,7 +3,9 @@ use russh::{
     self, client,
     keys::{PrivateKeyWithHashAlg, load_secret_key, ssh_key},
 };
+use sqlx::{MySql, Pool, mysql::MySqlPoolOptions};
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Debug)]
 // #[warn(dead_code)]
@@ -94,4 +96,16 @@ pub async fn connect_ssh_with_key(
     }
 
     Ok(handle)
+}
+
+pub async fn create_pool(database_url: &str, lifetime: u64) -> Result<Pool<MySql>, sqlx::Error> {
+    MySqlPoolOptions::new()
+        // .max_connections(10)
+        // .min_connections(2)
+        .acquire_timeout(Duration::from_secs(3))
+        .idle_timeout(Duration::from_secs(30))
+        .max_lifetime(Duration::from_secs(lifetime * 60))
+        .test_before_acquire(true)
+        .connect(database_url)
+        .await
 }
