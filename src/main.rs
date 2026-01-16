@@ -137,7 +137,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mysql_user, mysql_password, mysql_local_port, mysql_db
     );
 
-    let pool = utils::create_pool(&database_url, lifetime).await?;
+    // let pool = utils::create_pool(&database_url, lifetime).await?;
+    let db = utils::Database::new(&database_url, lifetime).await?;
 
     // MySqlPoolOptions::new()
     // .idle_timeout(timeout)
@@ -198,15 +199,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // let res = query(qry).fetch_all(&pool).await?;
-        let res: Vec<MySqlRow> = match pool.fetch_all(qry).await {
+        let res: Vec<MySqlRow> = match db.execute_query(qry).await {
             Ok(res) => res,
             Err(sqlx::Error::PoolTimedOut) => {
                 println!("PoolTimedOut error!");
-                println!("Pool is closed? {:?}", pool.is_closed());
-                println!("IDLE connections {:?}", pool.num_idle());
-                println!("Total connections {:?}", pool.size());
-                if pool.num_idle() > 0 {
-                    let mut new_pool = match pool.try_acquire() {
+                println!("Pool is closed? {:?}", db.pool.is_closed());
+                println!("IDLE connections {:?}", db.pool.num_idle());
+                println!("Total connections {:?}", db.pool.size());
+                if db.pool.num_idle() > 0 {
+                    let mut new_pool = match db.pool.try_acquire() {
                         Some(conn) => conn,
                         None => {
                             println!("Can't acquire pool");

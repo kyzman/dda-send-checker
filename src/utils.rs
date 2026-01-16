@@ -3,9 +3,17 @@ use russh::{
     self, client,
     keys::{PrivateKeyWithHashAlg, load_secret_key, ssh_key},
 };
-use sqlx::{MySql, Pool, mysql::MySqlPoolOptions};
+use sqlx::{
+    Executor, MySql, Pool,
+    mysql::{MySqlPoolOptions, MySqlRow},
+};
 use std::sync::Arc;
 use std::time::Duration;
+
+#[derive(Clone)]
+pub struct Database {
+    pub pool: Pool<MySql>,
+}
 
 #[derive(Debug)]
 // #[warn(dead_code)]
@@ -61,6 +69,46 @@ pub fn parse_date_from_arg(argument: &str) -> InputData {
     }
 }
 
+impl Database {
+    pub async fn new(database_url: &str, lifetime: u64) -> Result<Self, sqlx::Error> {
+        let pool = Self::create_pool(database_url, lifetime).await?;
+        Ok(Database { pool })
+    }
+
+    pub async fn create_pool(
+        database_url: &str,
+        lifetime: u64,
+    ) -> Result<Pool<MySql>, sqlx::Error> {
+        MySqlPoolOptions::new()
+            // .max_connections(10)
+            // .min_connections(2)
+            .acquire_timeout(Duration::from_secs(3))
+            .idle_timeout(Duration::from_secs(30))
+            .max_lifetime(Duration::from_secs(lifetime * 60))
+            .test_before_acquire(true)
+            .connect(database_url)
+            .await
+    }
+
+    pub async fn reconnect(
+        &mut self,
+        database_url: &str,
+        lifetime: u64,
+    ) -> Result<(), sqlx::Error> {
+        // Create new pool
+        let new_pool = Self::create_pool(database_url, lifetime).await?;
+
+        // Replace old pool
+        self.pool = new_pool;
+        Ok(())
+    }
+
+    pub async fn execute_query(&self, query: &str) -> Result<Vec<MySqlRow>, sqlx::Error> {
+        let result = self.pool.fetch_all(query).await?;
+        Ok(result)
+    }
+}
+
 pub async fn connect_ssh_with_key(
     ssh_host: String,
     ssh_port: u16,
@@ -96,16 +144,4 @@ pub async fn connect_ssh_with_key(
     }
 
     Ok(handle)
-}
-
-pub async fn create_pool(database_url: &str, lifetime: u64) -> Result<Pool<MySql>, sqlx::Error> {
-    MySqlPoolOptions::new()
-        // .max_connections(10)
-        // .min_connections(2)
-        .acquire_timeout(Duration::from_secs(3))
-        .idle_timeout(Duration::from_secs(30))
-        .max_lifetime(Duration::from_secs(lifetime * 60))
-        .test_before_acquire(true)
-        .connect(database_url)
-        .await
 }
