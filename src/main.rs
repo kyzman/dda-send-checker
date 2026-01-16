@@ -138,7 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // let pool = utils::create_pool(&database_url, lifetime).await?;
-    let db = utils::Database::new(&database_url, lifetime).await?;
+    let mut db = utils::Database::new(&database_url, lifetime).await?;
 
     // MySqlPoolOptions::new()
     // .idle_timeout(timeout)
@@ -206,6 +206,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Pool is closed? {:?}", db.pool.is_closed());
                 println!("IDLE connections {:?}", db.pool.num_idle());
                 println!("Total connections {:?}", db.pool.size());
+                // Рабочее, но возвращается вместо Pool<MySql> структура PoolConnection<MySql>, с которой, впрочем, можно работать как с Pool,
+                // однако они не равны и это создаёт проблему expected Pool<MySql>, found PoolConnection<MySql> (rust-analyzer E0308),
+                // если пытаться использовать одну и ту-же переменную.
+                // Возможный вариант решения, изначально после connect вызывать acquire(), которая вернёт PoolConnection
+                // и далее работать с PoolConnection, а не Pool, однако это не тривиальное решение.
                 if db.pool.num_idle() > 0 {
                     let mut new_pool = match db.pool.try_acquire() {
                         Some(conn) => conn,
