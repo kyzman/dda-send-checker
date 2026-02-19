@@ -4,9 +4,46 @@ use sqlx::{Column, Executor, Row, mysql::MySqlRow};
 use std::time::Duration;
 use tokio;
 
-use crate::utils::InputData;
+use crate::utils::{Database, InputData};
 
 mod utils;
+
+async fn query_with_retry(
+    db: &mut utils::Database,
+    query: &str,
+    db_url: &str,
+    lifetime: u64,
+) -> Result<Vec<MySqlRow>, sqlx::Error> {
+    // let mut new_db: Database = db.clone();
+    match db.execute_query(query).await {
+        Ok(res) => return Ok(res),
+        Err(sqlx::Error::PoolTimedOut) => {
+            println!("PoolTimedOut error!");
+            println!("Pool is closed? {:?}", db.pool.is_closed());
+            println!("IDLE connections {:?}", db.pool.num_idle());
+            println!("Total connections {:?}", db.pool.size());
+            if db.pool.num_idle() > 0 {
+                if let Err(reconnect_err) = db.reconnect(db_url, lifetime).await {
+                    eprintln!("Reconnection failed: {:?}", reconnect_err);
+                    return Err(reconnect_err);
+                }
+            } else {
+                eprintln!("No free connection!");
+                db.pool.close().await;
+                // println!("Pool is closed? {:?}", db.pool.is_closed());
+                if let Err(reconnect_err) = db.reconnect(db_url, lifetime).await {
+                    eprintln!("Reconnection failed: {:?}", reconnect_err);
+                    return Err(reconnect_err);
+                } else {
+                    println!("Succesfully reconnected!");
+                }
+                // return Err(sqlx::Error::PoolTimedOut);
+            }
+        }
+        Err(err) => return Err(err),
+    };
+    return db.execute_query(query).await;
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -79,6 +116,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let table2 = std::env::var("TABLE2")
         .map_err(|e| format!("TABLE2 not set: {}", e))?
         .replace("`", "");
+    let table3 = std::env::var("TABLE3")
+        .map_err(|e| format!("TABLE3 not set: {}", e))?
+        .replace("`", "");
     let req_interval: u64 = std::env::var("INTERVAL")
         .map_err(|e| format!("INTERVAL not set: {}", e))?
         .parse()
@@ -139,7 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // let pool = utils::create_pool(&database_url, lifetime).await?;
     let mut db = utils::Database::new(&database_url, lifetime).await?;
-
+    // db.pool.acquire().await;
     // MySqlPoolOptions::new()
     // .idle_timeout(timeout)
     // .max_connections(3)
@@ -171,6 +211,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     bpd.tenant_id in (select * from tenant_ids)
     and bpd.payment_demand_date_time between current_date() and DATE_ADD(CURDATE(), INTERVAL 1 DAY)
     ) as 'BPD'
+    ,
+    (select count(*) from `{schema}`.`{table3}` bp where bp.tenant_id in (select * from tenant_ids) and date(bp.PAYMENT_DATE_TIME) = CURDATE()
+    ) as 'SUCCESS'
+    ,
+    (select round(sum(bp.AMOUNT), 2) from `{schema}`.`{table3}` bp where bp.tenant_id in (select * from tenant_ids) and date(bp.PAYMENT_DATE_TIME) = CURDATE()
+    ) as 'INCOME'
     "
     );
 
@@ -199,6 +245,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // let res = query(qry).fetch_all(&pool).await?;
+        /* // Вариант для возможной разработки
         let res: Vec<MySqlRow> = match db.execute_query(qry).await {
             Ok(res) => res,
             Err(sqlx::Error::PoolTimedOut) => {
@@ -215,7 +262,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let mut new_pool = match db.pool.try_acquire() {
                         Some(conn) => conn,
                         None => {
-                            println!("Can't acquire pool");
+                            println!("Can't reconnect");
                             break;
                         }
                     };
@@ -226,6 +273,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 break;
             }
+            Err(e) => {
+                println!("Error: {:?}", e);
+                break;
+            }
+        };
+        */
+
+        let res = match query_with_retry(&mut db, qry, &database_url, lifetime).await {
+            Ok(res) => res,
             Err(e) => {
                 println!("Error: {:?}", e);
                 break;

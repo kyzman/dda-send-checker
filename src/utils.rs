@@ -10,13 +10,22 @@ use sqlx::{
 use std::sync::Arc;
 use std::time::Duration;
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct Database {
     pub pool: Pool<MySql>,
 }
 
+// Example of a service using the database with automatic reconnect
+#[allow(dead_code)]
+pub struct DatabaseService {
+    db: Database,
+    db_url: String,
+    lifetime: u64,
+}
+
 #[derive(Debug)]
-// #[warn(dead_code)]
+#[allow(dead_code)]
 pub enum InputData {
     Unsent(NaiveDate),
     Wegabond(NaiveDate),
@@ -39,6 +48,7 @@ impl client::Handler for Client {
     }
 }
 
+#[allow(dead_code)]
 pub fn parse_date_from_arg(argument: &str) -> InputData {
     let data = argument.split("_").collect::<Vec<&str>>();
     if data.len() < 3 {
@@ -69,6 +79,7 @@ pub fn parse_date_from_arg(argument: &str) -> InputData {
     }
 }
 
+#[allow(dead_code)]
 impl Database {
     pub async fn new(database_url: &str, lifetime: u64) -> Result<Self, sqlx::Error> {
         let pool = Self::create_pool(database_url, lifetime).await?;
@@ -109,6 +120,39 @@ impl Database {
     }
 }
 
+#[allow(dead_code)]
+impl DatabaseService {
+    pub async fn new(db_url: String, lifetime: u64) -> Result<Self, sqlx::Error> {
+        let db = Database::new(&db_url, lifetime).await?;
+        Ok(DatabaseService {
+            db,
+            db_url,
+            lifetime,
+        })
+    }
+
+    pub async fn execute_with_retry(&self, query: &str) -> Result<Vec<MySqlRow>, sqlx::Error> {
+        // First attempt
+        match self.db.execute_query(query).await {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                println!("Query failed: {:?}, attempting reconnect", e);
+
+                // Attempt reconnect
+                let mut new_db = self.db.clone();
+                if let Err(reconnect_err) = new_db.reconnect(&self.db_url, self.lifetime).await {
+                    eprintln!("Reconnection failed: {:?}", reconnect_err);
+                    return Err(e);
+                }
+
+                // Retry query with new connection
+                new_db.execute_query(query).await
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
 pub async fn connect_ssh_with_key(
     ssh_host: String,
     ssh_port: u16,
