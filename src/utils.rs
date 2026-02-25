@@ -189,3 +189,13 @@ pub async fn connect_ssh_with_key(
 
     Ok(handle)
 }
+
+pub fn ending(n: usize) -> &'static str {
+    match (n % 10, n % 100) {
+        (1, 11) => "",
+        (1, _) => "а",
+        (2..=4, 12..=14) => "",
+        (2..=4, _) => "и",
+        _ => "",
+    }
+}

@@ -240,6 +240,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         state: _,
                     },
                 ) => break,
+                Event::Key(KeyEvent {
+                    code: _,
+                    modifiers: _,
+                    kind: _,
+                    state: _,
+                }) => continue,
                 _ => (),
             }
         }
