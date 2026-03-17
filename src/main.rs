@@ -1,10 +1,10 @@
 use chrono::Local;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, poll, read};
-use sqlx::{Column, Executor, Row, mysql::MySqlRow};
+use sqlx::{Column, Row, mysql::MySqlRow};
 use std::time::Duration;
 use tokio;
 
-use crate::utils::{Database, InputData};
+use crate::utils::InputData;
 
 mod utils;
 
